@@ -8,12 +8,18 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: scrape-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Użyj Node.js
         uses: actions/setup-node@v4
@@ -31,5 +37,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add scraped.json
-          git commit -m "Automatyczna aktualizacja danych" || echo "Brak zmian"
-          git push
+          if git diff --staged --quiet; then
+            echo "Brak zmian"
+            exit 0
+          fi
+          git commit -m "Automatyczna aktualizacja danych"
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase -X theirs "origin" "${GITHUB_REF_NAME}"
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              exit 0
+            fi
+            echo "Push odrzucony (próba ${attempt}), pobieram zmiany z remote i ponawiam."
+            sleep $((attempt * 2))
+          done
+          echo "Nie udało się wypchnąć zmian na ${GITHUB_REF_NAME}."
+          exit 1
